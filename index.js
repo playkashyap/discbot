@@ -3,8 +3,8 @@ const express = require('express');
 const cors = require('cors');
 const Snoowrap = require('snoowrap');
 const { Client, GatewayIntentBits } = require('discord.js');
-const sqlite3 = require('sqlite3').verbose();
 const { GoogleGenerativeAI } = require("@google/generative-ai");
+const { MongoClient } = require('mongodb');
 
 // Setup express server
 const app = express();
@@ -14,6 +14,31 @@ app.use(express.json({ extended: true, limit: "1mb" }));
 const GENEMI_API_KEY = process.env.API_KEY;
 const genAI = new GoogleGenerativeAI(GENEMI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+// MongoDB Atlas connection URI
+const uri = process.env.MONGO_URI; // Your MongoDB Atlas URI
+
+const client = new MongoClient(uri, {
+    tls: true,
+    tlsInsecure: false,
+  });
+  
+  client.on('commandFailed', (event) => {
+    console.error('Command failed:', event);
+  });
+  
+  async function connect() {
+    try {
+      await client.connect();
+      console.log("Connected to MongoDB!");
+    } catch (err) {
+      console.error("Connection error:", err);
+    } finally {
+      await client.close();
+    }
+  }
+  
+  connect();
 
 
 let botContext = `
@@ -45,23 +70,6 @@ Streamer Info:
 
 const messages = [{ role: "system", content: botContext }];
 
-
-// Create or open the SQLite database
-const db = new sqlite3.Database('./posts.db', (err) => {
-    if (err) {
-        console.error('Error opening database:', err.message);
-    } else {
-        // Create table if it doesn't exist
-        db.run(`CREATE TABLE IF NOT EXISTS posted_posts (
-            id TEXT PRIMARY KEY
-        )`, (err) => {
-            if (err) {
-                console.error('Error creating table:', err.message);
-            }
-        });
-    }
-});
-
 // Reddit API configuration
 const reddit = new Snoowrap({
     userAgent: 'myBot',
@@ -76,24 +84,30 @@ const discordClient = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages]
 });
 
-// Function to check if a post ID has been posted
-function hasPostBeenPosted(postId, callback) {
-    db.get('SELECT id FROM posted_posts WHERE id = ?', [postId], (err, row) => {
-        if (err) {
-            console.error('Error querying database:', err.message);
-            return callback(false);
-        }
-        callback(row !== undefined); // If row is found, the post has been posted
-    });
+async function hasPostBeenPosted(postId) {
+    if (!db) {
+        console.error('Database connection not established');
+        return false;
+    }
+    try {
+        const result = await db.collection('posted_posts').findOne({ id: postId });
+        return result !== null;
+    } catch (err) {
+        console.error('Error querying MongoDB Atlas:', err.message);
+        return false;
+    }
 }
 
-// Function to add a post ID to the database
-function markPostAsPosted(postId) {
-    db.run('INSERT INTO posted_posts (id) VALUES (?)', [postId], (err) => {
-        if (err) {
-            console.error('Error inserting post ID into database:', err.message);
-        }
-    });
+async function markPostAsPosted(postId) {
+    if (!db) {
+        console.error('Database connection not established');
+        return;
+    }
+    try {
+        await db.collection('posted_posts').insertOne({ id: postId });
+    } catch (err) {
+        console.error('Error inserting post ID into MongoDB Atlas:', err.message);
+    }
 }
 
 // Function to post to Discord channel
@@ -122,6 +136,7 @@ async function postToDiscord(post) {
     }
 }
 
+
 // Function to fetch new posts from Reddit and send one post at a time
 async function checkForNewRedditPosts() {
     try {
@@ -134,25 +149,24 @@ async function checkForNewRedditPosts() {
 
         // Find the first post that hasn't been sent yet
         for (const post of posts) {
-            hasPostBeenPosted(post.id, async (posted) => {
-                if (!posted) {
-                    console.log(`Posting 1 new post to Discord: ${post.title}`);
+            const posted = await hasPostBeenPosted(post.id);
+            if (!posted) {
+                console.log(`Posting 1 new post to Discord: ${post.title}`);
 
-                    const imageUrl = post.preview ? post.preview.images[0].source.url : null;
+                const imageUrl = post.preview ? post.preview.images[0].source.url : null;
 
-                    const postToSend = {
-                        title: post.title,
-                        url: `https://reddit.com${post.permalink}`,
-                        imageUrl: imageUrl,
-                    };
+                const postToSend = {
+                    title: post.title,
+                    url: `https://reddit.com${post.permalink}`,
+                    imageUrl: imageUrl,
+                };
 
-                    await postToDiscord(postToSend);
+                await postToDiscord(postToSend);
 
-                    // Mark this post as posted
-                    markPostAsPosted(post.id);
-                }
-            });
-            break; // Exit after sending one post
+                // Mark this post as posted
+                await markPostAsPosted(post.id);
+                break; // Exit after sending one post
+            }
         }
     } catch (error) {
         console.error('Error checking for new posts:', error.message);
@@ -160,7 +174,8 @@ async function checkForNewRedditPosts() {
 }
 
 // Poll Reddit every 60 seconds to check for new posts
-setInterval(checkForNewRedditPosts, 60000); // 60 seconds
+
+// setInterval(checkForNewRedditPosts, 60000); // 60 seconds
 
 
 
