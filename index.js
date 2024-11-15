@@ -21,24 +21,30 @@ const uri = process.env.MONGO_URI; // Your MongoDB Atlas URI
 const client = new MongoClient(uri, {
     tls: true,
     tlsInsecure: false,
-  });
-  
-  client.on('commandFailed', (event) => {
+});
+
+client.on('commandFailed', (event) => {
     console.error('Command failed:', event);
-  });
-  
-  async function connect() {
+});
+
+let db;
+
+async function connect() {
     try {
-      await client.connect();
-      console.log("Connected to MongoDB!");
+        await client.connect();
+        console.log("Connected to MongoDB!");
+        db = client.db('MYBOT'); // Assign the database instance
     } catch (err) {
-      console.error("Connection error:", err);
-    } finally {
-      await client.close();
+        console.error("Connection error:", err);
     }
-  }
-  
-  connect();
+}
+
+// Call connect during server initialization
+connect().then(() => {
+    console.log("MongoDB connection established.");
+}).catch(err => {
+    console.error("Failed to connect to MongoDB:", err.message);
+});
 
 
 let botContext = `
@@ -80,6 +86,7 @@ const reddit = new Snoowrap({
 });
 
 // Discord bot setup
+
 const discordClient = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages]
 });
@@ -90,7 +97,7 @@ async function hasPostBeenPosted(postId) {
         return false;
     }
     try {
-        const result = await db.collection('posted_posts').findOne({ id: postId });
+        const result = await db.collection('BOTDATA').findOne({ id: postId });
         return result !== null;
     } catch (err) {
         console.error('Error querying MongoDB Atlas:', err.message);
@@ -104,7 +111,7 @@ async function markPostAsPosted(postId) {
         return;
     }
     try {
-        await db.collection('posted_posts').insertOne({ id: postId });
+        await db.collection('BOTDATA').insertOne({ id: postId });
     } catch (err) {
         console.error('Error inserting post ID into MongoDB Atlas:', err.message);
     }
@@ -175,7 +182,7 @@ async function checkForNewRedditPosts() {
 
 // Poll Reddit every 60 seconds to check for new posts
 
-// setInterval(checkForNewRedditPosts, 60000); // 60 seconds
+setInterval(checkForNewRedditPosts, 60000); // 60 seconds
 
 
 
@@ -246,7 +253,7 @@ app.get("/gpt/:text", async (req, res) => {
 
 
 // Start server
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
     discordClient.login(process.env.DISCORD_TOKEN) // Log into Discord
