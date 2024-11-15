@@ -182,7 +182,15 @@ async function checkForNewRedditPosts() {
 
 // Poll Reddit every 60 seconds to check for new posts
 
-setInterval(checkForNewRedditPosts, 60000); // 60 seconds
+app.get('/run-reddit-check', async (req, res) => {
+    try {
+        await checkForNewRedditPosts();
+        res.status(200).send("Reddit check executed successfully.");
+    } catch (error) {
+        console.error("Error running Reddit check:", error.message);
+        res.status(500).send("Failed to execute Reddit check.");
+    }
+});
 
 
 
